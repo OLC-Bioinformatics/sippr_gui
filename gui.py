@@ -1,153 +1,221 @@
+#!/usr/bin/python3
+from PyQt5.QtWidgets import QWidget, QToolTip, QPushButton, QApplication, QFileDialog, QLabel, QVBoxLayout, QMainWindow
+from PyQt5.QtGui import QFont
+from PyQt5.QtCore import QThreadPool, QRunnable, pyqtSlot, QTimer
+from PyQt5 import QtGui
+import subprocess
 import sys
-from PyQt4 import QtGui, QtCore
+import os
+
+testpath = os.path.abspath(os.path.dirname(__file__))
+sys.path.append(os.path.join(testpath, 'demos'))
+import design
 
 
-class Window(QtGui.QMainWindow):
+class Worker(QRunnable):
+    """
+    Worker thread
+
+    Inherits from QRunnable to handler worker thread setup, signals and wrap-up.
+
+    :param callback: The function callback to run on this worker thread. Supplied args and
+                     kwargs will be passed through to the runner.
+    :type callback: function
+    :param args: Arguments to pass to the callback function
+    :param kwargs: Keywords to pass to the callback function
+
+    """
+    def __init__(self, fn, *args, **kwargs):
+        super(Worker, self).__init__()
+
+        # Store constructor arguments (re-used for processing)
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+
+    @pyqtSlot()
+    def run(self):
+        """
+        Initialise the runner function with passed args, kwargs.
+        """
+
+        # Retrieve args/kwargs here; and fire processing using them
+        self.fn(*self.args, **self.kwargs)
+
+
+class GUI(QMainWindow, design.Ui_GeneSippr):
+
+    def main(self):
+        self.folder_browse()
+        self.start_analyses()
+
+    def folder_browse(self):
+        self.miseq_folder_btn.clicked.connect(self.folder_choose)
+
+    def folder_choose(self):
+        fname = QFileDialog.getExistingDirectory(self,
+                                                 'Select MiSeq Folder',
+                                                 '/mnt/nas/Forest/live_sipping_testing/miseq_data')
+        self.miseq_dir = os.path.split(fname)[-1]
+        if self.miseq_dir:
+            self.analysis_btn.setEnabled(True)
+
+    def start_analyses(self):
+        self.analysis_btn.clicked.connect(self.run)
+        self.analysis_btn.setEnabled(False)
+
+    def run(self):
+        if self.miseq_dir:
+            print('Ready to go!')
+            worker = Worker(self.sippr)
+            self.miseq_folder_btn.setEnabled(False)
+            self.analysis_btn.setEnabled(False)
+            self.output.setEnabled(True)
+            self.log()
+            self.threadpool.start(worker)
+        else:
+            print('Hold up!')
+
+    def sippr(self):
+        command = 'docker run -i --rm -v /mnt/nas:/mnt/nas ' \
+                  '-v /home/adamkoziol/Bioinformatics:/home/ubuntu/Bioinformatics ' \
+                  'olcbioinformatics/sipprverse:latest /bin/bash -c "source activate genesippr && python method.py ' \
+                  '-m /home/ubuntu/Bioinformatics/ -f 161104_M02466_0002_000000000-AV4G5 -r1 70 -r2 0 -c ' \
+                  '/home/ubuntu/Bioinformatics/sippr/method/SampleSheet.csv ' \
+                  '-r /mnt/nas/assemblydatabases/0.2.3/databases ' \
+                  '-d /home/ubuntu/Bioinformatics/sippr/method/sequences ' \
+                  '-o /home/ubuntu/Bioinformatics/sippr/method"'
+        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = process.communicate()
+        self.output.setEnabled(False)
+        # self.output.deleteLater()
+        self.miseq_folder_btn.setEnabled(True)
+        self.reports.setEnabled(True)
+
+    def log(self):
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self.log_read)
+        self.timer.start()
+        self.output.setEnabled(True)
+
+    def log_read(self):
+        try:
+            log = open('/home/adamkoziol/Bioinformatics/sippr/method/portal.log').readlines()
+        except FileNotFoundError:
+            log = str()
+        try:
+            self.output.setText(''.join(log))
+        except RuntimeError:
+            pass
 
     def __init__(self):
-        super(Window, self).__init__()
-        self.setGeometry(50, 50, 500, 300)
-        self.setWindowTitle("PyQT tuts!")
-        self.setWindowIcon(QtGui.QIcon('pythonlogo.png'))
+        super(self.__class__, self).__init__()
+        self.miseq_dir = str()
+        self.threadpool = QThreadPool()
+        self.timer = QTimer()
+        self.setupUi(self)
+        self.main()
 
-        extractAction = QtGui.QAction("&GET TO THE CHOPPAH!!!", self)
-        extractAction.setShortcut("Ctrl+Q")
-        extractAction.setStatusTip('Leave The App')
-        extractAction.triggered.connect(self.close_application)
 
-        openEditor = QtGui.QAction("&Editor", self)
-        openEditor.setShortcut("Ctrl+E")
-        openEditor.setStatusTip('Open Editor')
-        openEditor.triggered.connect(self.editor)
+class Example(QMainWindow):
 
-        openFile = QtGui.QAction("&Open File", self)
-        openFile.setShortcut("Ctrl+O")
-        openFile.setStatusTip('Open File')
-        openFile.triggered.connect(self.file_open)
+    def main(self):
 
-        self.statusBar()
+        QToolTip.setFont(QFont('SansSerif', 10))
 
-        mainMenu = self.menuBar()
+        self.setToolTip('This is a <b>QWidget</b> widget')
 
-        fileMenu = mainMenu.addMenu('&File')
-        fileMenu.addAction(extractAction)
-        fileMenu.addAction(openFile)
-
-        editorMenu = mainMenu.addMenu("&Editor")
-        editorMenu.addAction(openEditor)
-
-        self.home()
-
-    def home(self):
-        btn = QtGui.QPushButton("Quit", self)
-        btn.clicked.connect(self.close_application)
-        btn.resize(btn.minimumSizeHint())
-        btn.move(0, 100)
-
-        extractAction = QtGui.QAction(QtGui.QIcon('todachoppa.png'), 'Flee the Scene', self)
-        extractAction.triggered.connect(self.close_application)
-        self.toolBar = self.addToolBar("Extraction")
-        self.toolBar.addAction(extractAction)
-
-        fontChoice = QtGui.QAction('Font', self)
-        fontChoice.triggered.connect(self.font_choice)
-        # self.toolBar = self.addToolBar("Font")
-        self.toolBar.addAction(fontChoice)
-
-        color = QtGui.QColor(0, 0, 0)
-
-        fontColor = QtGui.QAction('Font bg Color', self)
-        fontColor.triggered.connect(self.color_picker)
-
-        self.toolBar.addAction(fontColor)
-
-        checkBox = QtGui.QCheckBox('Enlarge Window', self)
-        checkBox.move(300, 25)
-        checkBox.stateChanged.connect(self.enlarge_window)
-
-        self.progress = QtGui.QProgressBar(self)
-        self.progress.setGeometry(200, 80, 250, 20)
-
-        self.btn = QtGui.QPushButton("Download", self)
-        self.btn.move(200, 120)
-        self.btn.clicked.connect(self.download)
-
-        # print(self.style().objectName())
-        self.styleChoice = QtGui.QLabel("Windows Vista", self)
-
-        comboBox = QtGui.QComboBox(self)
-        comboBox.addItem("motif")
-        comboBox.addItem("Windows")
-        comboBox.addItem("cde")
-        comboBox.addItem("Plastique")
-        comboBox.addItem("Cleanlooks")
-        comboBox.addItem("windowsvista")
-
-        comboBox.move(50, 250)
-        self.styleChoice.move(50, 150)
-        comboBox.activated[str].connect(self.style_choice)
-
-        cal = QtGui.QCalendarWidget(self)
-        cal.move(500, 200)
-        cal.resize(200, 200)
+        self.setGeometry(300, 300, 300, 200)
+        self.setWindowTitle('GeneSippr')
+        self.folder_browse()
+        self.start_analyses()
 
         self.show()
 
-    def file_open(self):
-        name = QtGui.QFileDialog.getOpenFileName(self, 'Open File')
-        file = open(name, 'r')
+    def log(self):
 
-        self.editor()
+        self.log_widget.setLayout(self.layout)
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self.log_read)
+        self.timer.start()
+        self.layout.addWidget(self.output)
+        self.setCentralWidget(self.log_widget)
 
-        with file:
-            text = file.read()
-            self.textEdit.setText(text)
+    def folder_browse(self):
+        self.folder_btn.setToolTip('This is a <b>QPushButton</b> widget')
+        self.folder_btn.resize(self.folder_btn.sizeHint())
+        # btn.move(50, 50)
+        self.folder_btn.clicked.connect(self.folder_choose)
 
-    def color_picker(self):
-        color = QtGui.QColorDialog.getColor()
-        self.styleChoice.setStyleSheet("QWidget { background-color: %s}" % color.name())
+    def folder_choose(self):
+        fname = QFileDialog.getExistingDirectory(self,
+                                                 'Select MiSeq Folder',
+                                                 '/mnt/nas/Forest/live_sipping_testing/miseq_data')
+        self.miseq_dir = os.path.split(fname)[-1]
+        if self.miseq_dir:
+            self.analysis_btn.setEnabled(True)
 
-    def editor(self):
-        self.textEdit = QtGui.QTextEdit()
-        self.setCentralWidget(self.textEdit)
+    def start_analyses(self):
 
-    def font_choice(self):
-        font, valid = QtGui.QFontDialog.getFont()
-        if valid:
-            self.styleChoice.setFont(font)
+        self.analysis_btn.setToolTip('This is a <b>QPushButton</b> widget')
+        self.analysis_btn.resize(self.analysis_btn.sizeHint())
+        self.analysis_btn.move(150, 150)
+        self.analysis_btn.clicked.connect(self.run)
+        self.analysis_btn.setEnabled(False)
 
-    def style_choice(self, text):
-        self.styleChoice.setText(text)
-        QtGui.QApplication.setStyle(QtGui.QStyleFactory.create(text))
-
-    def download(self):
-        self.completed = 0
-
-        while self.completed < 100:
-            self.completed += 0.0001
-            self.progress.setValue(self.completed)
-
-    def enlarge_window(self, state):
-        if state == QtCore.Qt.Checked:
-            self.setGeometry(50, 50, 1000, 600)
+    def run(self):
+        if self.miseq_dir:
+            print('Ready to go!')
+            worker = Worker(self.sippr)
+            self.folder_btn.setEnabled(False)
+            self.analysis_btn.setEnabled(False)
+            self.log()
+            self.threadpool.start(worker)
         else:
-            self.setGeometry(50, 50, 500, 300)
+            print('Hold up!')
 
-    def close_application(self):
-        choice = QtGui.QMessageBox.question(self, 'Extract!',
-                                            "Get into the chopper?",
-                                            QtGui.QMessageBox.Yes | QtGui.QMessageBox.No)
-        if choice == QtGui.QMessageBox.Yes:
-            print("Extracting Naaaaaaoooww!!!!")
-            sys.exit()
-        else:
+    def sippr(self):
+        command = 'docker run -i --rm -v /mnt/nas:/mnt/nas ' \
+                  '-v /home/adamkoziol/Bioinformatics:/home/ubuntu/Bioinformatics ' \
+                  'olcbioinformatics/sipprverse:latest /bin/bash -c "source activate genesippr && python method.py ' \
+                  '-m /home/ubuntu/Bioinformatics/ -f 161104_M02466_0002_000000000-AV4G5 -r1 70 -r2 0 -c ' \
+                  '/home/ubuntu/Bioinformatics/sippr/method/SampleSheet.csv ' \
+                  '-r /mnt/nas/assemblydatabases/0.2.3/databases ' \
+                  '-d /home/ubuntu/Bioinformatics/sippr/method/sequences ' \
+                  '-o /home/ubuntu/Bioinformatics/sippr/method"'
+        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = process.communicate()
+        print(self.miseq_dir)
+        self.layout.removeWidget(self.log_widget)
+        self.log_widget.deleteLater()
+        self.log_widget = None
+        self.folder_btn.setEnabled(True)
+
+    def log_read(self):
+        try:
+            log = open('/home/adamkoziol/Bioinformatics/sippr/method/portal.log').readlines()
+        except FileNotFoundError:
+            log = str()
+        try:
+            self.output.setText("Log: %s" % ''.join(log))
+        except RuntimeError:
             pass
 
+    def __init__(self):
+        super().__init__()
+        self.miseq_dir = str()
+        self.layout = QVBoxLayout()
+        self.folder_btn = QPushButton('Select MiSeq Folder', self)
+        self.analysis_btn = QPushButton('Run Analyses', self)
+        self.threadpool = QThreadPool()
+        self.timer = QTimer()
+        self.output = QLabel('Log')
+        self.log_widget = QWidget()
+        self.main()
 
-def run():
-    app = QtGui.QApplication(sys.argv)
-    GUI = Window()
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    ex = GUI()
+    ex.show()
     sys.exit(app.exec_())
-
-
-run()
