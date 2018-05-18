@@ -1,15 +1,23 @@
 #!/usr/bin/python3
-from PyQt5.QtWidgets import QWidget, QToolTip, QPushButton, QApplication, QFileDialog, QLabel, QVBoxLayout, QMainWindow
+from PyQt5.QtWidgets import QWidget, QToolTip, QPushButton, QApplication, QFileDialog, QLabel, QVBoxLayout, QMainWindow, QErrorMessage, QMessageBox
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import QThreadPool, QRunnable, pyqtSlot, QTimer
 from PyQt5 import QtGui
+from argparse import ArgumentParser
 import subprocess
+from glob import glob
+try:
+    import xml.etree.cElementTree as ElementTree
+except ImportError:
+    import xml.etree.ElementTree as ElementTree
 import sys
 import os
 
 testpath = os.path.abspath(os.path.dirname(__file__))
+sys.path.append(testpath)
 sys.path.append(os.path.join(testpath, 'demos'))
 import design
+import error_classes
 
 
 class Worker(QRunnable):
@@ -55,10 +63,60 @@ class GUI(QMainWindow, design.Ui_GeneSippr):
     def folder_choose(self):
         fname = QFileDialog.getExistingDirectory(self,
                                                  'Select MiSeq Folder',
-                                                 '/mnt/nas/Forest/live_sipping_testing/miseq_data')
-        self.miseq_dir = os.path.split(fname)[-1]
-        if self.miseq_dir:
-            self.analysis_btn.setEnabled(True)
+                                                 '/home/adamkoziol/Bioinformatics/miseq_data')
+        self.miseqfolder = os.path.split(fname)[-1]
+        if self.miseqfolder:
+            self.readlength_determination()
+            if self.cycles >= int(self.readlengthforward) + 16:
+                self.analysis_btn.setEnabled(True)
+            else:
+                pass
+
+    def message(self, window_title, short, detailed):
+        self.error = QMessageBox()
+        self.error.setWindowTitle(window_title)
+        self.error.setText(short)
+        self.error.setDetailedText(detailed)
+        self.error.exec()
+
+    def readlength_determination(self):
+        # Count the number of completed cycles in the run of interest
+        try:
+            self.message('TitleSpot', 'Bork!', 'dgfsdg')
+            # self.popup.label.setText('CustomError')
+
+            # self.popup.show()
+            cycle_folders = \
+                glob(os.path.join(self.miseqpath, self.miseqfolder, 'Data', 'Intensities', 'BaseCalls', 'L001', 'C*'))
+            self.cycles = len(cycle_folders)
+            _ = cycle_folders[0]
+        except IndexError:
+            error_classes.FolderError()
+            print('Something went wrong')
+        self.parseruninfo()
+        self.forwardreads.setText('Forward Read Length: {}'.format(self.readlengthforward))
+        self.reversereads.setText('Reverse Read Length: {}'.format(self.readlengthreverse))
+
+    def parseruninfo(self):
+        """
+
+        """
+        #
+        try:
+            runinfo = ElementTree.ElementTree(file=os.path.join(self.miseqpath, self.miseqfolder, 'RunInfo.xml'))
+            #
+            for elem in runinfo.iter():
+                for run in elem:
+                    try:
+                        num_cycles = run.attrib['NumCycles']
+                        if run.attrib['Number'] == '1':
+                            self.readlengthforward = num_cycles
+                        if run.attrib['Number'] == '4':
+                            self.readlengthreverse = num_cycles
+                    except KeyError:
+                        pass
+        except IOError:
+            pass
 
     def start_analyses(self):
         self.analysis_btn.clicked.connect(self.run)
@@ -87,10 +145,7 @@ class GUI(QMainWindow, design.Ui_GeneSippr):
                   '-o /home/ubuntu/Bioinformatics/sippr/method"'
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = process.communicate()
-        self.output.setEnabled(False)
-        # self.output.deleteLater()
-        self.miseq_folder_btn.setEnabled(True)
-        self.reports.setEnabled(True)
+        self.sippr_clear()
 
     def log(self):
         self.timer.setInterval(1000)
@@ -108,114 +163,46 @@ class GUI(QMainWindow, design.Ui_GeneSippr):
         except RuntimeError:
             pass
 
-    def __init__(self):
+    def sippr_clear(self):
+        self.timer.stop()
+        self.miseq_folder_btn.setEnabled(True)
+        self.reports.setEnabled(True)
+        try:
+            os.remove('/home/adamkoziol/Bioinformatics/sippr/method/portal.log')
+        except:
+            pass
+
+    def __init__(self, args):
         super(self.__class__, self).__init__()
-        self.miseq_dir = str()
+        self.miseqpath = os.path.join(args.miseqpath)
+        self.referencefilepath = '/home/ubuntu/targets'
+        self.readlengthforward = 'full'
+        self.readlengthreverse = 'full'
+        self.copy = True
+        self.miseqfolder = str()
+        self.cycles = int()
         self.threadpool = QThreadPool()
         self.timer = QTimer()
+        self.popup = error_classes.PopupError()
+        self.error = ''
         self.setupUi(self)
         self.main()
 
 
-class Example(QMainWindow):
-
-    def main(self):
-
-        QToolTip.setFont(QFont('SansSerif', 10))
-
-        self.setToolTip('This is a <b>QWidget</b> widget')
-
-        self.setGeometry(300, 300, 300, 200)
-        self.setWindowTitle('GeneSippr')
-        self.folder_browse()
-        self.start_analyses()
-
-        self.show()
-
-    def log(self):
-
-        self.log_widget.setLayout(self.layout)
-        self.timer.setInterval(1000)
-        self.timer.timeout.connect(self.log_read)
-        self.timer.start()
-        self.layout.addWidget(self.output)
-        self.setCentralWidget(self.log_widget)
-
-    def folder_browse(self):
-        self.folder_btn.setToolTip('This is a <b>QPushButton</b> widget')
-        self.folder_btn.resize(self.folder_btn.sizeHint())
-        # btn.move(50, 50)
-        self.folder_btn.clicked.connect(self.folder_choose)
-
-    def folder_choose(self):
-        fname = QFileDialog.getExistingDirectory(self,
-                                                 'Select MiSeq Folder',
-                                                 '/mnt/nas/Forest/live_sipping_testing/miseq_data')
-        self.miseq_dir = os.path.split(fname)[-1]
-        if self.miseq_dir:
-            self.analysis_btn.setEnabled(True)
-
-    def start_analyses(self):
-
-        self.analysis_btn.setToolTip('This is a <b>QPushButton</b> widget')
-        self.analysis_btn.resize(self.analysis_btn.sizeHint())
-        self.analysis_btn.move(150, 150)
-        self.analysis_btn.clicked.connect(self.run)
-        self.analysis_btn.setEnabled(False)
-
-    def run(self):
-        if self.miseq_dir:
-            print('Ready to go!')
-            worker = Worker(self.sippr)
-            self.folder_btn.setEnabled(False)
-            self.analysis_btn.setEnabled(False)
-            self.log()
-            self.threadpool.start(worker)
-        else:
-            print('Hold up!')
-
-    def sippr(self):
-        command = 'docker run -i --rm -v /mnt/nas:/mnt/nas ' \
-                  '-v /home/adamkoziol/Bioinformatics:/home/ubuntu/Bioinformatics ' \
-                  'olcbioinformatics/sipprverse:latest /bin/bash -c "source activate genesippr && python method.py ' \
-                  '-m /home/ubuntu/Bioinformatics/ -f 161104_M02466_0002_000000000-AV4G5 -r1 70 -r2 0 -c ' \
-                  '/home/ubuntu/Bioinformatics/sippr/method/SampleSheet.csv ' \
-                  '-r /mnt/nas/assemblydatabases/0.2.3/databases ' \
-                  '-d /home/ubuntu/Bioinformatics/sippr/method/sequences ' \
-                  '-o /home/ubuntu/Bioinformatics/sippr/method"'
-        process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = process.communicate()
-        print(self.miseq_dir)
-        self.layout.removeWidget(self.log_widget)
-        self.log_widget.deleteLater()
-        self.log_widget = None
-        self.folder_btn.setEnabled(True)
-
-    def log_read(self):
-        try:
-            log = open('/home/adamkoziol/Bioinformatics/sippr/method/portal.log').readlines()
-        except FileNotFoundError:
-            log = str()
-        try:
-            self.output.setText("Log: %s" % ''.join(log))
-        except RuntimeError:
-            pass
-
-    def __init__(self):
-        super().__init__()
-        self.miseq_dir = str()
-        self.layout = QVBoxLayout()
-        self.folder_btn = QPushButton('Select MiSeq Folder', self)
-        self.analysis_btn = QPushButton('Run Analyses', self)
-        self.threadpool = QThreadPool()
-        self.timer = QTimer()
-        self.output = QLabel('Log')
-        self.log_widget = QWidget()
-        self.main()
-
-
 if __name__ == '__main__':
+    # Parser for arguments
+    parser = ArgumentParser(description='GUI for genesippr')
+    parser.add_argument('-o', '--outputpath',
+                        required=True,
+                        help='Path to directory in which report folder is to be created')
+    parser.add_argument('-m', '--miseqpath',
+                        required=True,
+                        help='Path of the folder containing MiSeq run data folder')
+    parser.add_argument('-c', '--customsamplesheet',
+                        help='Path of folder containing a custom sample sheet (still must be named "SampleSheet.csv")')
+    # Get the arguments into an object
+    arguments = parser.parse_args()
     app = QApplication(sys.argv)
-    ex = GUI()
+    ex = GUI(arguments)
     ex.show()
     sys.exit(app.exec_())
