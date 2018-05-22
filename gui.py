@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 from PyQt5.QtWidgets import QWidget, QToolTip, QPushButton, QApplication, QFileDialog, QLabel, QVBoxLayout, QMainWindow, QErrorMessage, QMessageBox
 from PyQt5.QtGui import QFont
-from PyQt5.QtCore import QThreadPool, QRunnable, pyqtSlot, QTimer
+from PyQt5.QtCore import QThreadPool, QRunnable, pyqtSlot, QTimer, Qt
 from PyQt5 import QtGui
 from argparse import ArgumentParser
 import subprocess
@@ -17,7 +17,7 @@ testpath = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(testpath)
 sys.path.append(os.path.join(testpath, 'demos'))
 import design
-import error_classes
+import gar
 
 
 class Worker(QRunnable):
@@ -58,48 +58,73 @@ class GUI(QMainWindow, design.Ui_GeneSippr):
         self.start_analyses()
 
     def folder_browse(self):
+        """
+
+        """
         self.miseq_folder_btn.clicked.connect(self.folder_choose)
 
     def folder_choose(self):
+        """
+
+        """
         fname = QFileDialog.getExistingDirectory(self,
                                                  'Select MiSeq Folder',
                                                  '/home/adamkoziol/Bioinformatics/miseq_data')
         self.miseqfolder = os.path.split(fname)[-1]
         if self.miseqfolder:
+            self.run_name.setText('MiSeq Run Name: {}'.format(self.miseqfolder))
             self.readlength_determination()
-            if self.cycles >= int(self.readlengthforward) + 16:
-                self.analysis_btn.setEnabled(True)
-            else:
+            try:
+                if self.cycles >= int(self.readlengthforward) + 16:
+                    self.analysis_btn.setEnabled(True)
+                else:
+                    pass
+            except ValueError:
                 pass
 
-    def message(self, window_title, short, detailed):
-        self.error = QMessageBox()
-        self.error.setWindowTitle(window_title)
-        self.error.setText(short)
-        self.error.setDetailedText(detailed)
-        self.error.exec()
+    @staticmethod
+    def message(window_title, short, detailed=None, disable=True):
+        """
+        Populate details to display in message box
+        :param window_title: The name of the window
+        :param short: Short description of the message
+        :param detailed: Detailed description of the message
+        :param disable: Boolean to disable window buttons
+        """
+        # Create the message box
+        error = QMessageBox()
+        error.setWindowTitle(window_title)
+        error.setText(short)
+        if detailed:
+            error.setDetailedText(detailed)
+        if disable:
+            # Disable the minimise, maximise, and close buttons for the window
+            error.setWindowFlags(Qt.CustomizeWindowHint)
+        error.exec()
 
     def readlength_determination(self):
+        """
+
+        """
         # Count the number of completed cycles in the run of interest
         try:
-            self.message('TitleSpot', 'Bork!', 'dgfsdg')
-            # self.popup.label.setText('CustomError')
-
-            # self.popup.show()
+            #
             cycle_folders = \
                 glob(os.path.join(self.miseqpath, self.miseqfolder, 'Data', 'Intensities', 'BaseCalls', 'L001', 'C*'))
             self.cycles = len(cycle_folders)
             _ = cycle_folders[0]
+            self.parseruninfo()
+            self.forwardreads.setText('Forward Read Length: {}'.format(self.readlengthforward))
+            self.reversereads.setText('Reverse Read Length: {}'.format(self.readlengthreverse))
         except IndexError:
-            error_classes.FolderError()
+            self.message('IndexError', 'Not a valid MiSeq run folder',
+                         detailed='Could not find the necessary directories in the supplied folder: {}'
+                         .format(os.path.join(self.miseqpath, self.miseqfolder)))
             print('Something went wrong')
-        self.parseruninfo()
-        self.forwardreads.setText('Forward Read Length: {}'.format(self.readlengthforward))
-        self.reversereads.setText('Reverse Read Length: {}'.format(self.readlengthreverse))
 
     def parseruninfo(self):
         """
-
+        Extract the number of forward and reverse reads in the run from the RunInfo.xml file
         """
         #
         try:
@@ -119,11 +144,17 @@ class GUI(QMainWindow, design.Ui_GeneSippr):
             pass
 
     def start_analyses(self):
+        """
+
+        """
         self.analysis_btn.clicked.connect(self.run)
         self.analysis_btn.setEnabled(False)
 
     def run(self):
-        if self.miseq_dir:
+        """
+
+        """
+        if self.miseqfolder:
             print('Ready to go!')
             worker = Worker(self.sippr)
             self.miseq_folder_btn.setEnabled(False)
@@ -135,40 +166,60 @@ class GUI(QMainWindow, design.Ui_GeneSippr):
             print('Hold up!')
 
     def sippr(self):
+        """
+
+        """
         command = 'docker run -i --rm -v /mnt/nas:/mnt/nas ' \
                   '-v /home/adamkoziol/Bioinformatics:/home/ubuntu/Bioinformatics ' \
                   'olcbioinformatics/sipprverse:latest /bin/bash -c "source activate genesippr && python method.py ' \
                   '-m /home/ubuntu/Bioinformatics/ -f 161104_M02466_0002_000000000-AV4G5 -r1 70 -r2 0 -c ' \
-                  '/home/ubuntu/Bioinformatics/sippr/method/SampleSheet.csv ' \
+                  '/home/ubuntu/Bioinformatics/sippr/gui/SampleSheet.csv ' \
                   '-r /mnt/nas/assemblydatabases/0.2.3/databases ' \
-                  '-d /home/ubuntu/Bioinformatics/sippr/method/sequences ' \
-                  '-o /home/ubuntu/Bioinformatics/sippr/method"'
+                  '-d /home/ubuntu/Bioinformatics/sippr/gui/161104_M02466_0002_000000000-AV4G5/sequences ' \
+                  '-o /home/ubuntu/Bioinformatics/sippr/gui/161104_M02466_0002_000000000-AV4G5"'
         process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = process.communicate()
+        #
+        print(self.samplesheet)
+        gar.GAR(self)
         self.sippr_clear()
 
     def log(self):
+        """
+        Set up the timer to update the output text box with the portal.log once every second
+        """
+
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.log_read)
         self.timer.start()
         self.output.setEnabled(True)
 
     def log_read(self):
+        """
+        Read the pipeline stdout from the portal.log
+        """
         try:
-            log = open('/home/adamkoziol/Bioinformatics/sippr/method/portal.log').readlines()
+            log = open('/home/adamkoziol/Bioinformatics/sippr/gui/161104_M02466_0002_000000000-AV4G5/portal.log').readlines()
+            for entry in log:
+                if 'SampleSheet:' in entry:
+                    self.samplesheet = entry.split()[-1]
         except FileNotFoundError:
             log = str()
+            self.samplesheet = str()
         try:
             self.output.setText(''.join(log))
         except RuntimeError:
             pass
 
     def sippr_clear(self):
+        """
+        Stop the timer, and enable buttons as necessary
+        """
         self.timer.stop()
         self.miseq_folder_btn.setEnabled(True)
         self.reports.setEnabled(True)
         try:
-            os.remove('/home/adamkoziol/Bioinformatics/sippr/method/portal.log')
+            os.remove('/home/adamkoziol/Bioinformatics/sippr/gui/portal.log')
         except:
             pass
 
@@ -181,10 +232,10 @@ class GUI(QMainWindow, design.Ui_GeneSippr):
         self.copy = True
         self.miseqfolder = str()
         self.cycles = int()
+        self.samplesheet = str()
         self.threadpool = QThreadPool()
         self.timer = QTimer()
-        self.popup = error_classes.PopupError()
-        self.error = ''
+        # self.error = ''
         self.setupUi(self)
         self.main()
 
